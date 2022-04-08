@@ -1,5 +1,4 @@
 import sys
-import gc
 import numpy as np
 import pandas as pd 
 import pip
@@ -58,9 +57,6 @@ train_df = pd.concat([create_dataset(df, w) for w in train_weeks]).reset_index(d
 
 if is_debug:
   train_df = train_df.sample(n = 10000)
-
-del df
-gc.collect()
 
 train_articles = train_df['customer_id'].unique().tolist()
 
