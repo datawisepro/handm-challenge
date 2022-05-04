@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd 
 import pip
 
-from sklearn.preprocessing import LabelEncoder
+import sklearn
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 import torch
 from tqdm import tqdm
@@ -12,14 +13,30 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 is_debug=False
+device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 print("Data import...")
 # Reading competition data
-df = pd.read_csv("transactions_train.csv", dtype={"article_id": str})
+df_transactions = pd.read_csv("transactions_train.csv")
+df_customers = pd.read_csv('customers_clean.csv')
+df_articles = pd.read_csv('articles_clean.csv')
 
 print("Data cleaning...")
+# Picking essential features from customer and article data files.
+df_customers_ess = df_customers[['customer_id', 'FN', 'Active', 'club_member_status',
+                                 'fashion_news_frequency', 'age']]
+df_articles_ess = df_articles[['article_id', 'product_type_no', 'product_type_name',
+                               'graphical_appearance_no', 'graphical_appearance_name',
+                               'section_no', 'section_name', 'garment_group_no', 
+                               'garment_group_name']]
+
+# Merging transaction data with cleaned customer and articles data to form final dataset.
+df = pd.merge(left=df_customers_ess, right=df_transactions, on='customer_id', how='left')
+df = pd.merge(left=df, right=df_articles_ess, on='article_id', how='left')
+
 # Converting 't_dat' column to datetime
 df['t_dat'] = pd.to_datetime(df['t_dat'])
+df['article_id'] = df['article_id'].astype(str)
 
 # Grouping active customer purchases
 active_articles = df.groupby("article_id")["t_dat"].max().reset_index()
@@ -30,13 +47,46 @@ df = df[df["article_id"].isin(active_articles["article_id"])].reset_index(drop=T
 # Creating 'week' column
 df["week"] = (df["t_dat"].max() - df["t_dat"]).dt.days // 7
 
-article_ids = np.concatenate([["placeholder"], np.unique(df["article_id"].values)])
+# Encoding categorical features.
+df['club_member_status'] = df['club_member_status'].astype(str)
+df['product_type_name'] = df['product_type_name'].astype(str)
+df['graphical_appearance_name'] = df['graphical_appearance_name'].astype(str)
+df['section_name'] = df['section_name'].astype(str)
+df['garment_group_name'] = df['garment_group_name'].astype(str)
+
+article_ids = np.concatenate([['placeholder'], np.unique(df['article_id'].values)])
+club_member_status = np.concatenate([['placeholder'], np.unique(df['club_member_status'].values)])
+fashion_news_freq = np.concatenate([['placeholder'], np.unique(df['fashion_news_frequency'].values)])
+product_type_name = np.concatenate([['placeholder'], np.unique(df['product_type_name'].values)])
+graphical_appearance_name = np.concatenate([['placeholder'], np.unique(df['graphical_appearance_name'].values)])
+section_name = np.concatenate([['placeholder'], np.unique(df['section_name'].values)])
+garment_group_name = np.concatenate([['placeholder'], np.unique(df['garment_group_name'].values)])
 
 le_article = LabelEncoder()
-le_article.fit(article_ids)
-df["article_id"] = le_article.transform(df["article_id"])
+le_member_status = LabelEncoder()
+le_fashion_news_freq = LabelEncoder()
+le_product_type_name = LabelEncoder()
+le_graphical_appearance_name = LabelEncoder()
+le_section_name = LabelEncoder()
+le_garment_group_name = LabelEncoder()
 
-WEEK_HIST_MAX = 5
+le_article.fit(article_ids)
+le_member_status.fit(club_member_status)
+le_fashion_news_freq.fit(fashion_news_freq)
+le_product_type_name.fit(product_type_name)
+le_graphical_appearance_name.fit(graphical_appearance_name)
+le_section_name.fit(section_name)
+le_garment_group_name.fit(garment_group_name)
+
+df['article_id'] = le_article.transform(df['article_id'])
+df['club_member_status'] = le_member_status.transform(df['club_member_status'])
+df['fashion_news_frequency'] = le_fashion_news_freq.transform(df['fashion_news_frequency'])
+df['product_type_name'] = le_product_type_name.transform(df['product_type_name'])
+df['graphical_appearance_name'] = le_graphical_appearance_name.transform(df['graphical_appearance_name'])
+df['section_name'] = le_section_name.transform(df['section_name'])
+df['garment_group_name'] = le_garment_group_name.transform(df['garment_group_name'])
+
+WEEK_HIST_MAX = 10
 
 def create_dataset(df, week):
     hist_df = df[(df["week"] > week) & (df["week"] <= week + WEEK_HIST_MAX)]
@@ -123,6 +173,10 @@ class HMModel(nn.Module):
     self.top = nn.Sequential(nn.Conv1d(3, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
                              nn.Conv1d(8, 32, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(32),
                              nn.Conv1d(32, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
+                             nn.Conv1d(8, 32, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(32),
+                             nn.Conv1d(32, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
+                             nn.Conv1d(8, 32, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(32),
+                             nn.Conv1d(32, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
                              nn.Conv1d(8, 1, kernel_size=1))
     
   def forward(self, inputs):
@@ -145,7 +199,7 @@ class HMModel(nn.Module):
 
 
 model = HMModel((len(le_article.classes_), 512))
-model = model.cuda()
+model = model.to(device)
 
 def calc_map(topk_preds, target_array, k=12):
   metric = []
@@ -161,7 +215,7 @@ def calc_map(topk_preds, target_array, k=12):
   return np.sum(metric) / min(k, target_array.sum())
 
 def read_data(data):
-  return tuple(d.cuda() for d in data[:-1]), data[-1].cuda()
+  return tuple(d.to(device) for d in data[:-1]), data[-1].to(device)
 
 def validate(model, val_loader, k=12):
   model.eval()
@@ -283,4 +337,4 @@ if __name__ == "__main__":
   test_df["prediction"] = inference(model, test_loader)
 
   print("Creating submission file...")
-  test_df.to_csv("submission1.csv", index=False, columns=["customer_id", "prediction"])
+  test_df.to_csv("submission3.csv", index=False, columns=["customer_id", "prediction"])
