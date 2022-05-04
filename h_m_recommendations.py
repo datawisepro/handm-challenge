@@ -173,10 +173,6 @@ class HMModel(nn.Module):
     self.top = nn.Sequential(nn.Conv1d(3, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
                              nn.Conv1d(8, 32, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(32),
                              nn.Conv1d(32, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
-                             nn.Conv1d(8, 32, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(32),
-                             nn.Conv1d(32, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
-                             nn.Conv1d(8, 32, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(32),
-                             nn.Conv1d(32, 8, kernel_size=1), nn.LeakyReLU(), nn.BatchNorm1d(8),
                              nn.Conv1d(8, 1, kernel_size=1))
     
   def forward(self, inputs):
